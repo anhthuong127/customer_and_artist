@@ -1,0 +1,289 @@
+ 2 . Output: Invoice_ID || Invoice_date || Total_sale || AvgInvoce ||Percent
+Tính tổng doanh thu cho mỗi hóa đơn trong quý 4 năm 2018, doanh thu trung bình của tất cả các hóa đơn trong quý đó AverageInvoiceSale_Q4_2018 và phần trăm doanh thu của từng hóa đơn so với doanh thu trung bình của quý đó PercentageOfQuarterlyAverage.
+
+
+WITH quarter_cte AS
+(
+SELECT
+  invoice_id AS Invoice_Id
+, FORMAT_DATE('%Y-%m-%d', invoice_date)  AS Invoice_Date
+, total AS total_sale
+,AVG(total) OVER () AS AverageInvoiceSale_Q4_2018
+FROM `K306.invoice`
+WHERE EXTRACT(YEAR FROM invoice_date) = 2018 AND  
+EXTRACT(MONTH FROM invoice_date) IN (10,11,12)
+)
+SELECT
+    Invoice_Id
+  , Invoice_Date
+  , ROUND(total_sale,2) AS total_sale
+  -- doanh thu trung bình
+  , ROUND(AverageInvoiceSale_Q4_2018,2) AS AverageInvoiceSale_Q4_2018
+  -- phần trăm doanh thu từng hóa đơn
+  , ROUND(SAFE_DIVIDE(total_sale, AverageInvoiceSale_Q4_2018) * 100, 2) AS PercentageOfQuarterlyAverage
+ FROM quarter_cte ;
+
+
+
+3: Output Customer Id || fullname || total amount spent || customer tier
+
+Liệt kê các khách hàng đã mua ít nhất 5 hóa đơn và có tổng giá trị hóa đơn trên $25.00. Phân loại họ vào các nhóm sau dựa trên tổng chi tiêu qua các năm của họ.
+"Silver Tier": Chi tiêu từ $25.00 đến $50.00 
+"Gold Tier": Chi tiêu từ $50.01 đến $100.00 
+"Platinum Tier": Chi tiêu trên $100.00
+
+WITH cte1 AS(
+SELECT
+  i.customer_id AS Customer_Id
+  , COUNT (i.invoice_id) AS count_invoice
+  , SUM (i.total) AS total_amount_spent
+FROM `K306.invoice` i
+ GROUP BY Customer_Id
+ HAVING count_invoice >=5 AND total_amount_spent >25.00
+ )
+-- case when từng trường hợp, join bảng cus vào cte
+SELECT
+    t.Customer_Id AS Customer_Id
+  , CONCAT(c.first_name,' ',c.last_name) AS FullName
+  , t.total_amount_spent AS TotalAmount_pent
+  , CASE
+    WHEN t.total_amount_spent BETWEEN 25.00 AND 50.00 THEN 'Silver Tie'
+    WHEN t.total_amount_spent BETWEEN 50.01 AND 100.00 THEN 'Gold Tier'
+    WHEN t.total_amount_spent > 100.00 THEN 'Platinum Tier'
+  END AS CustomerTier
+FROM cte1 t
+JOIN `K306.customer` c ON c.customer_id = t.customer_id;
+
+
+
+4: Output:  Quarter| GenreName || Invoice_Count || Customer_Count
+Tính tổng doanh thu, số hóa đơn và số khách hàng cho mỗi thể loại nhạc trong mỗi quý của năm 2017 và xếp hạng các thể loại dựa trên doanh thu của chúng trong từng quý QuarterlyRank .
+--- b1: tách quý, 2017, số hoá đơn, tổng doanh thu, số KH theo thể loại nhạc
+--- b2: partition by, xếp hạng dựa trên doanh thu rank or dense rank đều đc
+
+
+WITH genre_detail_table AS
+(
+  SELECT
+    EXTRACT(QUARTER FROM i.invoice_date) AS Quarter
+  , EXTRACT(YEAR FROM i.invoice_date) AS Year
+  , g.name AS GenreName
+  --doanh thu phân theo thể loại nhạc
+  , SUM(il.unit_price *il.quantity) AS total_sale
+  --đếm khách hàng
+  , COUNT(DISTINCT i.customer_id) AS Customer_Count
+  --đếm số hoá đơn
+  , COUNT(DISTINCT i.invoice_id) AS Invoice_Count
+FROM `K306.invoice` i
+JOIN `K306.invoice_line` il ON il.invoice_id = i.invoice_id
+JOIN `K306.track` t ON t.track_id = il.track_id
+JOIN `K306.genre` g ON g.genre_id = t.genre_id
+WHERE EXTRACT(YEAR FROM i.invoice_date) = 2017
+GROUP BY Quarter,Year,GenreName
+)
+SELECT 
+    Quarter
+  , GenreName
+  , Invoice_Count
+  , Customer_Count
+  , RANK () OVER (
+      PARTITION BY Year, Quarter ORDER BY total_sale) AS QuarterlyRank
+FROM genre_detail_table
+ORDER BY Quarter, QuarterlyRank;
+
+
+5. Xác định khách hàng Loyal hay Churned
+Tính số khách hàng được coi là "loyal" (trung thành) và "churned" (đã rời bỏ) dựa trên hành vi mua hàng của họ trong năm 2017 và 2018 và tổng sô tiền mua hàng của họ trong năm 2017
+Một khách hàng được coi là "loyal" nếu họ đã mua hàng trong năm 2017 và tiếp tục mua hàng trong năm 2018.
+Một khách hàng được coi là "churned" nếu họ đã mua hàng trong năm 2017 nhưng không mua hàng trong năm 2018.
+
+
+--xuất info khách hàng 2017 
+WITH cus_info2017 AS(
+SELECT
+  i.customer_id
+, SUM(i.total) AS total_2017
+FROM `K306.invoice` i
+WHERE EXTRACT(YEAR FROM i.invoice_date) = 2017
+GROUP BY i.customer_id)
+
+
+-- xuất info 2018
+, cus_info2018 AS(
+SELECT
+  DISTINCT i.customer_id
+FROM `K306.invoice` i
+WHERE EXTRACT(YEAR FROM i.invoice_date) = 2018 )
+
+
+-- bảng chính
+SELECT
+    CASE
+    WHEN cf.customer_id IS NOT NULL THEN 'Loyal'
+    ELSE 'Churned'
+    END AS CustomerType
+  , COUNT(DISTINCT ci.customer_id) AS CustomerCount
+  , SUM(total_2017) AS TotalRevenueln2017
+FROM cus_info2017 ci
+LEFT JOIN cus_info2018 cf ON cf.customer_id = ci.customer_id
+GROUP BY CustomerType;
+
+
+
+
+
+6: Tính chênh lệch doanh thu
+Tính chênh lệch doanh thu của mỗi tháng so với tháng trước đó trong năm 2017. Nếu tháng đầu tiên không có tháng trước để so sánh, hãy để giá trị là 0.
+
+
+
+
+
+
+WITH rev_table AS
+(
+  SELECT
+    EXTRACT(MONTH FROM invoice_date) AS Month
+  , EXTRACT(YEAR FROM invoice_date) AS Year
+    -- tính rev mỗi tháng
+  , SUM(total) AS MonthlyRevenue
+  FROM `K306.invoice`
+  WHERE EXTRACT(YEAR FROM invoice_date) = 2017
+  GROUP BY Month, Year
+)
+SELECT
+  Month
+, MonthlyRevenue
+-- tính trước đó 1 tháng, nếu tháng trước ko có thì bằng 0
+, COALESCE(LAG(MonthlyRevenue, 1) OVER (partition by Year ORDER BY Month),0) AS PreviousMonthRevenue
+, MonthlyRevenue - COALESCE(LAG(MonthlyRevenue, 1) OVER (partition by Year ORDER BY Month), 0) AS RevenueDifference
+– có thể dùng COALESCE(MonthlyRevenue - LAG(MonthlyRevenue, 1) OVER (partition by Year ORDER BY Month), MonthlyRevenue, 0) AS RevenueDifference
+FROM rev_table
+ORDER BY Month;
+
+
+7:  tính phần trăm tăng trưởng số hóa đơn InvoiceGrowthRate  và phần trăm tăng trưởng tổng giá trị hóa đơn AmountGrowthRate giữa hai năm.
+Tìm các khách hàng đã mua hàng vào năm 2017 và quay lại mua hàng vào năm 2018. Với mỗi khách hàng này, hãy tính phần trăm tăng trưởng số hóa đơn InvoiceGrowthRate  và phần trăm tăng trưởng tổng giá trị hóa đơn AmountGrowthRate giữa hai năm.
+--cte1 count invoice + total 2017
+WITH invoice2017 AS(
+SELECT
+  c.customer_id
+, CONCAT(c.first_name,' ',c.last_name) AS FullName
+, COUNT(DISTINCT i.invoice_id) AS Invoices2017
+, SUM(i.total) AS TotalAmount2017
+FROM `K306.customer` c
+JOIN `K306.invoice` i ON i.customer_id = c.customer_id
+WHERE EXTRACT(YEAR FROM i.invoice_date) = 2017
+GROUP BY c.customer_id, FullName
+),
+
+
+--cte 2 count invoice + total 2018
+invoice2018 AS(
+SELECT
+  c.customer_id
+, CONCAT(c.first_name,' ',c.last_name) AS FullName
+, COUNT(DISTINCT i.invoice_id) AS Invoices2018
+, SUM(i.total) AS TotalAmount2018
+FROM `K306.customer` c
+JOIN `K306.invoice` i ON i.customer_id = c.customer_id
+WHERE EXTRACT(YEAR FROM i.invoice_date) = 2018
+GROUP BY c.customer_id, FullName)
+
+
+-- bảng chính và tính percent InvoiceGrowthRate & AmountGrowthRate
+SELECT
+  ia.FullName AS FullName
+, ia.Invoices2017 AS Invoices2017
+, ib.Invoices2018 AS Invoice2018
+, SAFE_DIVIDE(ib.Invoices2018 - ia.Invoices2017, ia.Invoices2017)*100 AS InvoiceGrowthRate
+, ia.TotalAmount2017 AS TotalAmount2017
+, ib.TotalAmount2018 AS TotalAmount2018
+, SAFE_DIVIDE (ib.TotalAmount2018 - ia.TotalAmount2017, ia.TotalAmount2017)*100 AS AmountGrowthRate
+FROM  invoice2017 ia
+JOIN invoice2018 ib ON ib.customer_id = ia.customer_id;
+—------
+
+
+
+8. TÌm khách hàng có số tiền mua hàng cao nhất
+Tìm khách hàng có tổng số tiền mua hàng cao nhất trong mỗi quốc gia. Trong trường hợp có nhiều khách hàng có cùng tổng số tiền cao nhất, hãy trả về tất cả. 
+WITH cte1 AS (
+SELECT
+  c.customer_id
+, CONCAT(c.first_name,' ', c.last_name) AS FullName
+, c.country AS Country
+, SUM(i.total) AS TotalAmount
+FROM `K306.customer` c
+JOIN `K306.invoice` i ON i.customer_id = c.customer_id
+GROUP BY 1,2,3)
+, cte2 AS (
+SELECT
+  FullName
+, Country
+, TotalAmount
+, RANK() OVER (PARTITION BY Country ORDER BY TotalAmount DESC) AS rank_total
+FROM cte1
+)
+SELECT
+  FullName
+, Country
+, TotalAmount
+FROM cte2
+WHERE rank_total = 1;
+
+
+
+
+9: Hãy liệt kê thông tin của từng nhân viên bao gồm cả tên quản lý trực tiếp và tên quản lý cấp trên (của quản lý trực tiếp) và số lượng nhân viên thuộc toàn bộ phân cấp quản lý của mỗi quản lý.
+
+
+
+
+WITH cte1 AS
+(
+SELECT
+    e.employee_id AS emp_id
+  , CONCAT(e.first_name,' ', e.last_name) AS EmployeeName
+  , e.reports_to AS man_id
+  , CONCAT(m.first_name,' ', m.last_name) AS ManagerName
+  , CONCAT(s.first_name,' ', s.last_name) AS SeniorManagerName
+FROM `K306.employee` e
+LEFT JOIN `K306.employee` m ON m.employee_id = e.reports_to --self join l1 - m là manager
+LEFT JOIN `K306.employee` s ON s.employee_id = m.reports_to  --self join l2 - s là senior
+)
+, cte2 AS(
+  SELECT
+   e.reports_to AS man_id
+  ,COUNT (*) AS SubordinateCount
+  FROM `K306.employee` e
+  WHERE e.reports_to IS NOT NULL
+  GROUP BY 1
+)
+-- BẢNG CHÍNH
+SELECT
+      c1.EmployeeName
+    , c1.ManagerName
+    , c1.SeniorManagerName
+    , c2.SubordinateCount AS SubordinateCount
+FROM cte1 c1
+LEFT JOIN cte2 c2 ON c2.man_id = c1.emp_id
+ORDER BY c1.EmployeeName;
+
+
+
+10 : Tìm các khách hàng đã mua cùng một bài hát (Track) ít nhất hai lần trở lên trong các hóa đơn khác nhau và tính số lần mua bài hát đó NumberOfPurchases.
+
+
+SELECT
+ CONCAT(c.first_name,' ',c.last_name) AS FullName
+, c.email AS Email
+, t.name AS TrackName
+,  COUNT(DISTINCT i.invoice_id) AS NumberOfPurchases -- tính số lặp lại của bài hát đó
+FROM `K306.customer` c
+JOIN `K306.invoice` i ON c.customer_id = i.customer_id
+JOIN `K306.invoice_line` il ON il.invoice_id = i.invoice_id
+JOIN `K306.track` t ON t.track_id = il.track_id
+GROUP BY FullName, Email, TrackName, t.track_id
+HAVING COUNT(DISTINCT i.invoice_id)  >=2;
+
