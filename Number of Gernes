@@ -1,0 +1,24 @@
+--1. Output: Customer_Id || fullname|| email || Number of Gernes 
+--Yêu cầu trả về thông tin của tất cả những khách hàng đã mua nhạc thuộc ít nhất hai thể loại khác nhau, trong đó có một thể loại là Alternative & Punk và cho biết số lượng thể loại nhạc khác nhau mà khách hàng đó đã mua (NumberOfGenres)
+--Output: Customer_Id || fullname|| email || Number of Gernes 
+
+
+SELECT
+    c.customer_id AS Customer_Id
+  , CONCAT(c.first_name,' ',c.last_name) AS FullName
+  , c.email AS Email
+  , COUNT(DISTINCT g.genre_id) AS NumberOfGenres
+FROM `K306.customer` c
+JOIN `K306.invoice` i ON c.customer_id = i.customer_id
+JOIN `K306.invoice_line` il ON il.invoice_id = i.invoice_id
+JOIN `K306.track` t ON t.track_id = il.track_id
+JOIN `K306.genre` g ON g.genre_id = t.genre_id
+GROUP BY c.customer_id, c.email, fullname
+HAVING
+  COUNT(DISTINCT g.genre_id) >=2  AND 
+  SUM(
+     CASE WHEN g.name = 'Alternative & Punk' THEN 1
+     ELSE 0
+     END
+  ) > 0
+  ORDER BY Customer_Id;
